@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "rootDir": "src",
+    "outDir": "dist",
+    "baseUrl": ".",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "declaration": false,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "paths": {
+      "@nuucognition/prompt-loader": ["./src/index"]
+    }
+  },
+  "include": ["src"]
+}
