@@ -203,4 +203,16 @@ describe("renderPrompt", () => {
       'Prompt body in prompt source references undeclared variable: missing. Declare it in frontmatter.variables or remove the reference.',
     )
   })
+
+  it("rejects interpolation tokens that contain whitespace", () => {
+    expect(() => renderPrompt("Hello {{missing value}}", {}, nestedMetadata)).toThrow(
+      'Placeholder {{missing value}} in prompt source must reference a single variable name without whitespace',
+    )
+  })
+
+  it("rejects conditional tokens that contain whitespace", () => {
+    expect(() => renderPrompt("{{#if missing value}}Nope{{/if}}", {}, nestedMetadata)).toThrow(
+      'Conditional block {{#if missing value}} in prompt source must reference a single variable name without whitespace',
+    )
+  })
 })

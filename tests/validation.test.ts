@@ -35,6 +35,34 @@ Hello {{missing}}`),
     )
   })
 
+  it("rejects interpolation tokens that contain whitespace", () => {
+    expect(() =>
+      validatePrompt(`---
+name: invalid-spaced-placeholder
+description: Invalid prompt
+variables: {}
+---
+
+Hello {{missing value}}`),
+    ).toThrow(
+      "Placeholder {{missing value}} in prompt source must reference a single variable name without whitespace",
+    )
+  })
+
+  it("rejects conditional tokens that contain whitespace", () => {
+    expect(() =>
+      validatePrompt(`---
+name: invalid-spaced-conditional
+description: Invalid prompt
+variables: {}
+---
+
+{{#if missing value}}Hello{{/if}}`),
+    ).toThrow(
+      "Conditional block {{#if missing value}} in prompt source must reference a single variable name without whitespace",
+    )
+  })
+
   it("throws on unexpected closing conditionals without rendering", () => {
     expect(() =>
       validatePrompt(`---
@@ -108,6 +136,22 @@ describe("discoverPrompts", () => {
     expect(discovered[0]?.promptPath).toBe("windows")
     expect(discovered[0]?.body).toBe(
       "\r\nWindows session: {{sessionId}}\r\n{{#if owner}}Owner: {{owner}}{{else}}Owner: unassigned{{/if}}\r\n",
+    )
+  })
+
+  it("rejects discovered prompt files with interpolation tokens that contain whitespace", async () => {
+    await expect(
+      discoverPrompts({ basePath: fixturePath("invalid-placeholder") }),
+    ).rejects.toThrow(
+      `Placeholder {{missing value}} in prompt file "${fixturePath("invalid-placeholder", "prompts", "spaced-placeholder.md")}" must reference a single variable name without whitespace`,
+    )
+  })
+
+  it("rejects discovered prompt files with conditional tokens that contain whitespace", async () => {
+    await expect(
+      discoverPrompts({ basePath: fixturePath("invalid-conditional") }),
+    ).rejects.toThrow(
+      `Conditional block {{#if missing value}} in prompt file "${fixturePath("invalid-conditional", "prompts", "spaced-conditional.md")}" must reference a single variable name without whitespace`,
     )
   })
 

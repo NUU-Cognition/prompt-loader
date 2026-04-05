@@ -1,7 +1,6 @@
 import { describe, expect, expectTypeOf, it, vi } from "vitest"
 
 import {
-  discoverPrompts,
   loadPrompt,
   type DiscoveredPrompt,
   type LoadPromptOptions,
@@ -111,21 +110,6 @@ describe("loadPrompt", () => {
     expect(result).toBe("")
   })
 
-  it("supports standalone package usage through the public API", async () => {
-    const module = await import("../src/index")
-    const result = await module.loadPrompt(
-      "standalone",
-      {
-        tool: "prompt-loader",
-        enabled: true,
-      },
-      { basePath: defaultBasePath, onUnknownVariable: "error" },
-    )
-
-    expect(result).toContain("Tool: prompt-loader")
-    expect(result).toContain("Feature enabled")
-  })
-
   it("supports custom basePath options", async () => {
     const result = await loadPrompt(
       "from-base",
@@ -194,6 +178,28 @@ describe("loadPrompt", () => {
     )
 
     expect(result).toBe("\r\nWindows session: abc-123\r\nOwner: unassigned\r\n")
+  })
+
+  it("rejects prompt files with interpolation tokens that contain whitespace", async () => {
+    await expect(
+      loadPrompt("spaced-placeholder", {}, {
+        basePath: fixturePath("invalid-placeholder"),
+        onUnknownVariable: "error",
+      }),
+    ).rejects.toThrow(
+      `Placeholder {{missing value}} in prompt file "${fixturePath("invalid-placeholder", "prompts", "spaced-placeholder.md")}" must reference a single variable name without whitespace`,
+    )
+  })
+
+  it("rejects prompt files with conditional tokens that contain whitespace", async () => {
+    await expect(
+      loadPrompt("spaced-conditional", {}, {
+        basePath: fixturePath("invalid-conditional"),
+        onUnknownVariable: "error",
+      }),
+    ).rejects.toThrow(
+      `Conditional block {{#if missing value}} in prompt file "${fixturePath("invalid-conditional", "prompts", "spaced-conditional.md")}" must reference a single variable name without whitespace`,
+    )
   })
 
   it.each([

@@ -39,9 +39,7 @@ export type PromptVariables = Record<string, unknown>
 
 const DEFAULT_PROMPTS_DIR = "prompts"
 const FRONTMATTER_DELIMITER = "---"
-const CONDITIONAL_OPEN = "{{#if "
 const CONDITIONAL_CLOSE = "{{/if}}"
-const CONDITIONAL_ELSE = "{{else}}"
 const INLINE_PROMPT_SOURCE = "prompt source"
 
 export function parsePrompt(source: string): ParsedPrompt {
@@ -326,7 +324,7 @@ function validateTemplateVariables(
   metadata: PromptMetadata,
   sourceLabel: string,
 ): void {
-  const usedVariables = collectTemplateVariables(body)
+  const usedVariables = collectTemplateVariables(body, sourceLabel)
   const undeclared = Array.from(usedVariables).filter((name) => !Object.hasOwn(metadata.variables, name))
 
   if (undeclared.length > 0) {
@@ -336,16 +334,23 @@ function validateTemplateVariables(
   }
 }
 
-function collectTemplateVariables(body: string): Set<string> {
+function collectTemplateVariables(body: string, sourceLabel: string): Set<string> {
   const usedVariables = new Set<string>()
-  const pattern = /{{\s*(#if\s+)?([^}\s]+)\s*}}/g
+  let index = 0
 
-  for (const match of body.matchAll(pattern)) {
-    if (match[2] === "/if" || match[2] === "else") {
+  while (index < body.length) {
+    if (!body.startsWith("{{", index)) {
+      index += 1
       continue
     }
 
-    usedVariables.add(match[2])
+    const token = parseTemplateTokenAt(body, index, sourceLabel)
+
+    if (token.kind === "placeholder" || token.kind === "conditional-open") {
+      usedVariables.add(token.variableName)
+    }
+
+    index = token.nextIndex
   }
 
   return usedVariables
@@ -362,14 +367,6 @@ function renderSection(
   let index = startIndex
 
   while (index < input.length) {
-    if (stopAtElse && input.startsWith(CONDITIONAL_ELSE, index)) {
-      return {
-        output,
-        index: index + CONDITIONAL_ELSE.length,
-        hitElse: true,
-      }
-    }
-
     if (input.startsWith(CONDITIONAL_CLOSE, index)) {
       if (startIndex === 0) {
         throw new Error(
@@ -384,48 +381,18 @@ function renderSection(
       }
     }
 
-    if (input.startsWith(CONDITIONAL_OPEN, index)) {
-      const endOfTag = input.indexOf("}}", index)
-
-      if (endOfTag === -1) {
-        throw new Error(`Unterminated conditional block in ${describeSource(sourceLabel)}`)
-      }
-
-      const variableName = input.slice(index + CONDITIONAL_OPEN.length, endOfTag).trim()
-
-      if (variableName.length === 0) {
-        throw new Error(
-          `Conditional block in ${describeSource(sourceLabel)} must reference a variable name`,
-        )
-      }
-
-      const truthy = renderSection(input, variables, endOfTag + 2, sourceLabel, true)
-      let falsy: { output: string; index: number; hitElse: boolean } | null = null
-
-      if (truthy.hitElse) {
-        falsy = renderSection(input, variables, truthy.index, sourceLabel)
-      }
-
-      if (Boolean(variables[variableName])) {
-        output += truthy.output
-      } else if (falsy) {
-        output += falsy.output
-      }
-
-      index = falsy ? falsy.index : truthy.index
-      continue
-    }
-
     if (input.startsWith("{{", index)) {
-      const endOfTag = input.indexOf("}}", index)
+      const token = parseTemplateTokenAt(input, index, sourceLabel)
 
-      if (endOfTag === -1) {
-        throw new Error(`Unterminated placeholder in ${describeSource(sourceLabel)}`)
+      if (stopAtElse && token.kind === "conditional-else") {
+        return {
+          output,
+          index: token.nextIndex,
+          hitElse: true,
+        }
       }
 
-      const token = input.slice(index + 2, endOfTag).trim()
-
-      if (token === "/if") {
+      if (token.kind === "conditional-close") {
         if (startIndex === 0) {
           throw new Error(
             `Unexpected closing {{/if}} without a matching {{#if}} in ${describeSource(sourceLabel)}`,
@@ -434,12 +401,12 @@ function renderSection(
 
         return {
           output,
-          index: endOfTag + 2,
+          index: token.nextIndex,
           hitElse: false,
         }
       }
 
-      if (token === "else") {
+      if (token.kind === "conditional-else") {
         if (!stopAtElse) {
           throw new Error(
             `Unexpected {{else}} outside of a conditional block in ${describeSource(sourceLabel)}`,
@@ -448,17 +415,31 @@ function renderSection(
 
         return {
           output,
-          index: endOfTag + 2,
+          index: token.nextIndex,
           hitElse: true,
         }
       }
 
-      if (token.length === 0) {
-        throw new Error(`Placeholder in ${describeSource(sourceLabel)} must reference a variable name`)
+      if (token.kind === "conditional-open") {
+        const truthy = renderSection(input, variables, token.nextIndex, sourceLabel, true)
+        let falsy: { output: string; index: number; hitElse: boolean } | null = null
+
+        if (truthy.hitElse) {
+          falsy = renderSection(input, variables, truthy.index, sourceLabel)
+        }
+
+        if (Boolean(variables[token.variableName])) {
+          output += truthy.output
+        } else if (falsy) {
+          output += falsy.output
+        }
+
+        index = falsy ? falsy.index : truthy.index
+        continue
       }
 
-      output += stringifyTemplateValue(variables[token])
-      index = endOfTag + 2
+      output += stringifyTemplateValue(variables[token.variableName])
+      index = token.nextIndex
       continue
     }
 
@@ -471,6 +452,76 @@ function renderSection(
   }
 
   return { output, index, hitElse: false }
+}
+
+function parseTemplateTokenAt(
+  input: string,
+  startIndex: number,
+  sourceLabel: string,
+):
+  | { kind: "placeholder"; variableName: string; nextIndex: number }
+  | { kind: "conditional-open"; variableName: string; nextIndex: number }
+  | { kind: "conditional-close"; nextIndex: number }
+  | { kind: "conditional-else"; nextIndex: number } {
+  const endOfTag = input.indexOf("}}", startIndex)
+
+  if (endOfTag === -1) {
+    if (input.startsWith("{{#if", startIndex)) {
+      throw new Error(`Unterminated conditional block in ${describeSource(sourceLabel)}`)
+    }
+
+    throw new Error(`Unterminated placeholder in ${describeSource(sourceLabel)}`)
+  }
+
+  const rawToken = input.slice(startIndex, endOfTag + 2)
+  const token = input.slice(startIndex + 2, endOfTag).trim()
+  const nextIndex = endOfTag + 2
+
+  if (token === "/if") {
+    return { kind: "conditional-close", nextIndex }
+  }
+
+  if (token === "else") {
+    return { kind: "conditional-else", nextIndex }
+  }
+
+  if (token === "#if" || /^#if\s+/u.test(token)) {
+    return {
+      kind: "conditional-open",
+      variableName: normalizeTemplateVariableName(
+        token.slice(3).trim(),
+        rawToken,
+        sourceLabel,
+        "Conditional block",
+      ),
+      nextIndex,
+    }
+  }
+
+  return {
+    kind: "placeholder",
+    variableName: normalizeTemplateVariableName(token, rawToken, sourceLabel, "Placeholder"),
+    nextIndex,
+  }
+}
+
+function normalizeTemplateVariableName(
+  value: string,
+  rawToken: string,
+  sourceLabel: string,
+  tokenType: "Placeholder" | "Conditional block",
+): string {
+  if (value.length === 0) {
+    throw new Error(`${tokenType} ${rawToken} in ${describeSource(sourceLabel)} must reference a variable name`)
+  }
+
+  if (/\s/u.test(value)) {
+    throw new Error(
+      `${tokenType} ${rawToken} in ${describeSource(sourceLabel)} must reference a single variable name without whitespace`,
+    )
+  }
+
+  return value
 }
 
 function stringifyTemplateValue(value: unknown): string {

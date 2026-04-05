@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/tsconfig",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": [
+    "src",
+    "tests",
+    "vitest.config.ts",
+    "tsup.config.ts"
+  ]
+}
