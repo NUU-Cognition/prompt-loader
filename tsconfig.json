@@ -15,7 +15,8 @@
     "skipLibCheck": true,
     "types": ["node"],
     "paths": {
-      "@nuucognition/prompt-loader": ["./src/index"]
+      "@nuucognition/prompt-loader": ["./src/index"],
+      "@nuucognition/prompt-loader/browser": ["./src/browser"]
     }
   },
   "include": ["src"]
