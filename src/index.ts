@@ -1,4 +1,5 @@
 import { readFile, readdir } from "node:fs/promises"
+import { createRequire } from "node:module"
 import path from "node:path"
 
 import {
@@ -40,6 +41,21 @@ export async function loadPrompt(
   validateProvidedVariables(promptPath, filePath, parsedPrompt.metadata, normalizedVariables, normalizedOptions)
 
   return renderPrompt(parsedPrompt.body, normalizedVariables, parsedPrompt.metadata)
+}
+
+export function resolvePackageBasePath(packageName: string, parentURL?: string): string {
+  if (typeof packageName !== "string" || packageName.trim().length === 0) {
+    throw new TypeError("packageName must be a non-empty string")
+  }
+
+  if (parentURL !== undefined && (typeof parentURL !== "string" || parentURL.trim().length === 0)) {
+    throw new TypeError("parentURL must be a non-empty string when provided")
+  }
+
+  const resolver = createRequire(parentURL ?? import.meta.url)
+  const manifestPath = resolver.resolve(`${packageName.trim()}/package.json`)
+
+  return path.dirname(manifestPath)
 }
 
 export async function discoverPrompts(
