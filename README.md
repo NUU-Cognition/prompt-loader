@@ -31,6 +31,7 @@ Markdown prompt loader with YAML frontmatter metadata, validation, recursive pro
   - [validatePrompt](#validatepromptsource)
   - [renderPrompt](#renderpromptbody-variables-metadata)
   - [discoverPrompts](#discoverpromptsoptions)
+  - [resolvePackageBasePath](#resolvepackagebasepathpackagename-parenturl)
 - [Types](#types)
   - [PromptMetadata](#promptmetadata)
   - [PromptVariable](#promptvariable)
@@ -53,6 +54,7 @@ Markdown prompt loader with YAML frontmatter metadata, validation, recursive pro
   - [Dynamic Prompt Registry](#dynamic-prompt-registry)
   - [Conditional Feature Sections](#conditional-feature-sections)
   - [Metadata-Only Prompts](#metadata-only-prompts)
+  - [Shipping Prompts in a Reusable Package](#shipping-prompts-in-a-reusable-package)
 - [Development](#development)
 - [License](#license)
 
@@ -657,6 +659,51 @@ Note that `promptPath` (derived from the file path) and `promptName` (from front
 
 ---
 
+### `resolvePackageBasePath(packageName, parentURL?)`
+
+Resolve the on-disk root directory of an installed npm package. Use this when a library ships its own `prompts/` directory and is consumed through a bundler that erases the package's module identity (see [Shipping Prompts in a Reusable Package](#shipping-prompts-in-a-reusable-package) for the full rationale).
+
+```typescript
+function resolvePackageBasePath(
+  packageName: string,
+  parentURL?: string,
+): string
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `packageName` | `string` | -- | The bare specifier of the target package (e.g. `"@my-org/my-lib"`). Surrounding whitespace is trimmed. |
+| `parentURL` | `string` | `import.meta.url` of prompt-loader | A `file://` URL to resolve from — typically `import.meta.url` of the calling module. Required for strict pnpm layouts where the target package is not visible from prompt-loader's own location. |
+
+**Returns:** `string` -- the absolute path of the package's root directory (the directory that contains `package.json`).
+
+**Throws:**
+- `TypeError` if `packageName` is not a non-empty string
+- `TypeError` if `parentURL` is provided but is not a non-empty string
+- The underlying `require.resolve` error if the package cannot be located, or if its `exports` field does not expose `./package.json`
+
+**Requirement on the target package:** the package being resolved must either (a) have no `exports` field, or (b) include `"./package.json": "./package.json"` in its `exports`. Without that, Node's resolver will refuse to surface the manifest. This is a common one-line addition in modern packages.
+
+**Example:**
+
+```typescript
+import path from "node:path"
+import { loadPrompt, resolvePackageBasePath } from "@nuucognition/prompt-loader"
+
+// Inside a library that ships its own prompts/ directory:
+const PROMPTS_BASE_PATH = resolvePackageBasePath("@my-org/my-lib", import.meta.url)
+
+await loadPrompt("greet", { name: "Nathan" }, { basePath: PROMPTS_BASE_PATH })
+// Reads from <my-lib install root>/prompts/greet.md, regardless of whether
+// my-lib was bundled into a downstream consumer.
+```
+
+**When to use:** Inside a reusable package that ships prompts as part of its published artifact. Direct application consumers loading their own prompts do not need this — `basePath` (or the default `process.cwd()`) is enough.
+
+---
+
 ## Types
 
 All types are exported from the package entrypoint.
@@ -994,6 +1041,49 @@ This is a PRODUCTION deployment. Full verification required.
 Rollback plan: {{rollbackPlan}}
 {{/if}}
 ```
+
+### Shipping Prompts in a Reusable Package
+
+If you publish a library that bundles its own `prompts/` directory and is consumed by other apps, you cannot just use `import.meta.dirname` to locate them. When a downstream consumer bundles your library (with tsup, esbuild, webpack, etc.), the resulting `import.meta.url` points at the consumer's bundle, not your package — and the `prompts/` directory is no longer where the code thinks it is.
+
+`resolvePackageBasePath` walks Node's module resolution back to the on-disk install of your package, regardless of bundling.
+
+**1. In your package's `package.json`, expose the manifest in your `exports`:**
+
+```json
+{
+  "name": "@my-org/my-lib",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "prompts"]
+}
+```
+
+The `"./package.json"` entry is what makes the manifest resolvable. The `"prompts"` entry in `files` ensures the directory ships with the published tarball.
+
+**2. In your library code, resolve the base path once and reuse it:**
+
+```typescript
+// my-lib/src/prompts.ts
+import { loadPrompt, resolvePackageBasePath } from "@nuucognition/prompt-loader"
+
+const PROMPTS_BASE_PATH = resolvePackageBasePath("@my-org/my-lib", import.meta.url)
+
+export async function greetPrompt(name: string): Promise<string> {
+  return loadPrompt("greet", { name }, { basePath: PROMPTS_BASE_PATH })
+}
+```
+
+Always pass `import.meta.url` of the calling module as the second argument. Without it, the resolver runs from prompt-loader's own location, which only happens to find your package in hoisted layouts (npm flat, pnpm with `shamefully-hoist`). Passing your own `import.meta.url` makes resolution work in strict pnpm and other isolated layouts.
+
+**3. Direct application consumers don't need this.** If you are an app loading prompts that live alongside your own source, keep using `basePath` (or the default `process.cwd()`). This recipe is specifically for the library-ships-assets case.
+
+---
 
 ### Metadata-Only Prompts
 
